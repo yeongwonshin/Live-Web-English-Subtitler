@@ -7,16 +7,15 @@
 - Whisper 계열 `faster-whisper` 모델로 영어 음성 전사
 - 항상 위에 표시되는 자막 오버레이 제공
 - 소리가 들어오면 자동으로 전사 구간을 만들고, 무음이면 대기
+- `--show-levels`로 실제 입력 오디오가 들어오는지 RMS 레벨 확인 가능
 
-> 권장 환경: Windows 10/11. Windows에서는 WASAPI loopback으로 스피커 출력을 직접 캡처합니다. macOS/Linux는 시스템 구조상 가상 오디오 장치 또는 monitor input 설정이 필요할 수 있습니다.
+> macOS는 OS가 시스템 오디오 입력을 기본 제공하지 않으므로 BlackHole 같은 loopback 장치 설정이 필요합니다.
 
 ---
 
 ## 1. 설치
 
-### Windows 권장 설치
-
-PowerShell 또는 명령 프롬프트에서:
+### Windows
 
 ```bash
 cd live_web_english_subtitler
@@ -26,7 +25,7 @@ pip install --upgrade pip
 pip install -r requirements-windows.txt
 ```
 
-### macOS / Linux 설치
+### macOS / Linux
 
 ```bash
 cd live_web_english_subtitler
@@ -36,11 +35,62 @@ pip install --upgrade pip
 pip install -r requirements-linux-mac.txt
 ```
 
-macOS는 기본적으로 시스템 오디오 loopback을 직접 제공하지 않으므로 BlackHole, Loopback, Soundflower 같은 가상 오디오 장치가 필요할 수 있습니다. Linux는 PulseAudio/PipeWire의 `monitor` 입력 장치를 선택하면 됩니다.
+---
+
+## 2. macOS에서 웹 영상 소리 연결하기
+
+BlackHole 설치 후에는 반드시 Mac을 재시동하세요.
+
+```bash
+brew install blackhole-2ch
+# 설치 후 재시동
+```
+
+재시동 후 장치 확인:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --list-devices
+```
+
+`BlackHole 2ch`가 보여야 합니다.
+
+### 소리도 들으면서 자막 생성하려면
+
+1. macOS **오디오 MIDI 설정(Audio MIDI Setup)** 앱 열기
+2. 왼쪽 아래 `+` 클릭
+3. **다중 출력 기기(Multi-Output Device)** 생성
+4. `MacBook Air 스피커` 체크
+5. `BlackHole 2ch` 체크
+6. 시스템 설정 → 사운드 → 출력에서 방금 만든 **다중 출력 기기** 선택
+7. 아래 명령으로 실행
+
+```bash
+./run_mac_blackhole.sh
+```
+
+또는:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --language en --model base.en --show-levels
+```
+
+영상 재생 중 터미널에 아래처럼 나오면 오디오가 들어오는 것입니다.
+
+```text
+[audio] input RMS max=0.03210 threshold=0.00400 [SOUND]
+```
+
+계속 아래처럼 나오면 브라우저 소리가 BlackHole으로 안 들어오는 상태입니다.
+
+```text
+[audio] input RMS max=0.00000 threshold=0.00400 [silence/too low]
+```
+
+이 경우 시스템 출력이 **다중 출력 기기**인지 다시 확인하세요.
 
 ---
 
-## 2. 실행
+## 3. 실행
 
 ### Windows
 
@@ -54,23 +104,29 @@ run_windows.bat
 python -m autosub --source auto --language en --model base.en
 ```
 
-### macOS / Linux
+### macOS
+
+```bash
+./run_mac_blackhole.sh
+```
+
+### Linux
+
+PulseAudio/PipeWire monitor 입력이 있으면:
 
 ```bash
 ./run.sh
 ```
 
-또는:
+또는 장치 이름을 지정합니다.
 
 ```bash
-python -m autosub --source auto --language en --model base.en
+PYTHONPATH=$PWD/src python -m autosub --source monitor --language en --model base.en --show-levels
 ```
-
-실행 후 웹 브라우저에서 영어 영상을 재생하면, 소리가 감지되는 순간 자동으로 자막 생성이 시작됩니다.
 
 ---
 
-## 3. 주요 옵션
+## 4. 주요 옵션
 
 ```bash
 python -m autosub --help
@@ -79,71 +135,59 @@ python -m autosub --help
 자주 쓰는 예시:
 
 ```bash
+# 입력 장치 목록 확인
+PYTHONPATH=$PWD/src python -m autosub --list-devices
+
+# macOS BlackHole 강제 선택
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --show-levels
+
+# 장치 번호로 직접 선택
+PYTHONPATH=$PWD/src python -m autosub --source 2 --show-levels
+
+# 소리 감지 민감도 올리기: 작은 소리도 감지
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --silence-rms 0.0025 --show-levels
+
 # 더 빠르게, 정확도는 낮음
-python -m autosub --model tiny.en
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --model tiny.en --show-levels
 
 # 정확도 조금 향상, CPU에서는 더 느림
-python -m autosub --model small.en
-
-# GPU 사용 가능 환경
-python -m autosub --model small.en --device cuda --compute-type float16
-
-# 자막 표시 시간을 길게
-python -m autosub --subtitle-ttl 8
-
-# 소리 감지 민감도 조절
-python -m autosub --silence-rms 0.006
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --model small.en --show-levels
 ```
 
 ---
 
-## 4. 작동 방식
+## 5. 자막창이 다른 창 뒤로 숨길 때
 
-1. 프로그램이 시스템 출력 오디오 또는 지정 입력 장치를 계속 감시합니다.
-2. RMS 기준으로 말소리/오디오가 감지되면 버퍼링을 시작합니다.
-3. 짧은 무음 또는 최대 청크 길이에 도달하면 해당 구간을 Whisper 모델에 전달합니다.
-4. 인식된 영어 문장을 화면 하단 오버레이에 표시합니다.
+이번 버전은 Tkinter `topmost`를 반복 적용하고, macOS에서는 PyObjC가 설치되어 있으면 floating window level과 all-Spaces 보조 속성을 적용합니다.
 
----
-
-## 5. 제한 사항
-
-- 이 프로그램은 영상 파일을 분석하는 것이 아니라 **재생되는 오디오**를 듣고 자막을 생성합니다.
-- DRM/브라우저/OS 오디오 정책 때문에 일부 환경에서는 시스템 오디오 캡처가 제한될 수 있습니다.
-- macOS는 별도 loopback 장치 설정이 필요할 수 있습니다.
-- 첫 실행 시 Whisper 모델이 다운로드되며, 이후에는 캐시됩니다.
-- 실시간 전사는 컴퓨터 성능과 모델 크기에 따라 1~몇 초 지연될 수 있습니다.
+그래도 macOS의 브라우저 **진짜 전체화면 모드**에서는 OS 정책상 별도 앱 창이 가려질 수 있습니다. 그 경우 브라우저를 초록 버튼 전체화면 대신 일반 창 최대화 상태로 사용하세요.
 
 ---
 
 ## 6. 문제 해결
 
-### Windows에서 소리가 안 잡힐 때
+### 영상 틀어도 자막이 안 나올 때
 
-1. 영상 소리가 실제 스피커/헤드폰으로 재생되는지 확인합니다.
-2. `python -m autosub --list-devices`로 장치를 확인합니다.
-3. 특정 장치를 지정합니다.
+먼저 RMS 레벨을 확인하세요.
 
 ```bash
-python -m autosub --source "Speakers"
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --show-levels --model tiny.en
 ```
 
-### 자막이 너무 늦게 뜰 때
-
-```bash
-python -m autosub --model tiny.en --max-chunk-seconds 3.2
-```
+- `[SOUND]`가 뜨면 오디오는 들어오고 있습니다. 조금 기다리거나 `--model tiny.en`으로 속도를 높여 보세요.
+- `[silence/too low]`만 뜨면 브라우저 소리가 BlackHole으로 안 들어오고 있습니다. macOS 출력 장치를 **다중 출력 기기**로 바꾸세요.
+- `BlackHole` 장치가 목록에 없으면 재시동하거나 `sudo killall coreaudiod` 후 다시 확인하세요.
 
 ### 잡음 때문에 아무 말이나 인식할 때
 
 ```bash
-python -m autosub --silence-rms 0.015
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --silence-rms 0.012
 ```
 
 ### CPU가 너무 느릴 때
 
 ```bash
-python -m autosub --model tiny.en --compute-type int8
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --model tiny.en --compute-type int8
 ```
 
 ---
@@ -157,6 +201,7 @@ live_web_english_subtitler/
 ├─ requirements-linux-mac.txt
 ├─ run_windows.bat
 ├─ run.sh
+├─ run_mac_blackhole.sh
 └─ src/
    └─ autosub/
       ├─ __main__.py

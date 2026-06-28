@@ -69,6 +69,7 @@ class WhisperWorker:
                 compute_type=self.compute_type,
             )
             self._loaded.set()
+            self.on_text(f"[Whisper] model loaded: {self.model_name}")
         except Exception as exc:
             self.on_text(f"[Whisper model load failed] {exc}")
             return

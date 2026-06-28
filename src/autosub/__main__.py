@@ -24,12 +24,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Whisper device")
     parser.add_argument("--compute-type", default="int8", help="faster-whisper compute type, e.g. int8, float16")
     parser.add_argument("--beam-size", type=int, default=3, help="Beam size for transcription")
-    parser.add_argument("--silence-rms", type=float, default=0.008, help="RMS threshold for audio activity")
-    parser.add_argument("--min-chunk-seconds", type=float, default=1.8, help="Minimum speech chunk duration")
-    parser.add_argument("--max-chunk-seconds", type=float, default=5.0, help="Maximum speech chunk duration before transcription")
-    parser.add_argument("--silence-hold-seconds", type=float, default=0.65, help="Silence duration required to close a chunk")
+    parser.add_argument("--silence-rms", type=float, default=0.004, help="RMS threshold for audio activity")
+    parser.add_argument("--min-chunk-seconds", type=float, default=1.4, help="Minimum speech chunk duration")
+    parser.add_argument("--max-chunk-seconds", type=float, default=4.0, help="Maximum speech chunk duration before transcription")
+    parser.add_argument("--silence-hold-seconds", type=float, default=0.55, help="Silence duration required to close a chunk")
     parser.add_argument("--subtitle-ttl", type=float, default=6.0, help="Seconds a subtitle remains visible")
     parser.add_argument("--no-overlay", action="store_true", help="Print captions to console only")
+    parser.add_argument("--show-levels", action="store_true", help="Print live input RMS levels so you can verify that audio is reaching the program")
+    parser.add_argument("--allow-mic-fallback", action="store_true", help="On macOS, allow auto mode to use the microphone if no BlackHole/loopback input is found")
     return parser.parse_args(argv)
 
 
@@ -69,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         min_chunk_seconds=args.min_chunk_seconds,
         max_chunk_seconds=args.max_chunk_seconds,
         silence_hold_seconds=args.silence_hold_seconds,
+        show_levels=args.show_levels,
+        allow_mic_fallback=args.allow_mic_fallback,
     )
     capture = make_capture(cfg, on_chunk=worker.submit, on_status=lambda s: emit(f"[audio] {s}"))
 

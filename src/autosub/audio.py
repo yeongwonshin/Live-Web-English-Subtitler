@@ -6,7 +6,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Callable
 
 import numpy as np
 
@@ -18,10 +18,32 @@ class AudioConfig:
     source: str = "auto"
     target_rate: int = 16000
     block_ms: int = 120
-    silence_rms: float = 0.008
-    min_chunk_seconds: float = 1.8
-    max_chunk_seconds: float = 5.0
-    silence_hold_seconds: float = 0.65
+    silence_rms: float = 0.004
+    min_chunk_seconds: float = 1.4
+    max_chunk_seconds: float = 4.0
+    silence_hold_seconds: float = 0.55
+    show_levels: bool = False
+    level_interval_seconds: float = 0.7
+    allow_mic_fallback: bool = False
+
+
+class LevelReporter:
+    def __init__(self, cfg: AudioConfig, on_status: Callable[[str], None] | None = None):
+        self.cfg = cfg
+        self.on_status = on_status or print
+        self._last = 0.0
+        self._max_since_last = 0.0
+
+    def __call__(self, level: float) -> None:
+        if not self.cfg.show_levels:
+            return
+        self._max_since_last = max(self._max_since_last, level)
+        now = time.time()
+        if now - self._last >= self.cfg.level_interval_seconds:
+            state = "SOUND" if self._max_since_last >= self.cfg.silence_rms else "silence/too low"
+            self.on_status(f"input RMS max={self._max_since_last:.5f} threshold={self.cfg.silence_rms:.5f} [{state}]")
+            self._max_since_last = 0.0
+            self._last = now
 
 
 class SpeechChunker:
@@ -34,7 +56,6 @@ class SpeechChunker:
         self._buf: list[np.ndarray] = []
         self._active = False
         self._last_sound = 0.0
-        self._start_time = 0.0
         self._sample_count = 0
 
     def accept(self, audio_16k: np.ndarray) -> None:
@@ -47,9 +68,9 @@ class SpeechChunker:
 
         if is_sound and not self._active:
             self._active = True
-            self._start_time = now
             self._buf = []
             self._sample_count = 0
+            self._last_sound = now
 
         if self._active:
             self._buf.append(audio_16k)
@@ -72,9 +93,8 @@ class SpeechChunker:
         self._buf = []
         self._active = False
         self._sample_count = 0
-        self._start_time = 0.0
         self._last_sound = 0.0
-        if chunk.size >= int(self.cfg.min_chunk_seconds * self.cfg.target_rate * 0.6):
+        if chunk.size >= int(self.cfg.min_chunk_seconds * self.cfg.target_rate * 0.55):
             self.on_chunk(chunk)
 
 
@@ -92,7 +112,7 @@ class WindowsLoopbackCapture(AudioCaptureBase):
     def __init__(self, cfg: AudioConfig, on_chunk: Callable[[np.ndarray], None], on_status: Callable[[str], None] | None = None):
         self.cfg = cfg
         self.on_status = on_status or print
-        self.chunker = SpeechChunker(cfg, on_chunk)
+        self.chunker = SpeechChunker(cfg, on_chunk, on_level=LevelReporter(cfg, self.on_status))
         self._stop = threading.Event()
 
     def run(self) -> None:
@@ -109,7 +129,7 @@ class WindowsLoopbackCapture(AudioCaptureBase):
             channels = max(1, min(channels, 2))
             block = max(256, int(rate * self.cfg.block_ms / 1000.0))
 
-            self.on_status(f"Capturing system audio: {device['name']} @ {rate}Hz")
+            self.on_status(f"Capturing system audio: {device['name']} @ {rate}Hz, channels={channels}")
             stream = pa.open(
                 format=pyaudio.paInt16,
                 channels=channels,
@@ -153,6 +173,9 @@ class WindowsLoopbackCapture(AudioCaptureBase):
 
         source = self.cfg.source.lower().strip()
         if source != "auto":
+            if source.isdigit():
+                dev = pa.get_device_info_by_index(int(source))
+                return dev
             for dev in devices:
                 if source in str(dev.get("name", "")).lower():
                     return dev
@@ -171,7 +194,7 @@ class SoundDeviceCapture(AudioCaptureBase):
     def __init__(self, cfg: AudioConfig, on_chunk: Callable[[np.ndarray], None], on_status: Callable[[str], None] | None = None):
         self.cfg = cfg
         self.on_status = on_status or print
-        self.chunker = SpeechChunker(cfg, on_chunk)
+        self.chunker = SpeechChunker(cfg, on_chunk, on_level=LevelReporter(cfg, self.on_status))
         self._stop = threading.Event()
         self._q: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
 
@@ -181,13 +204,14 @@ class SoundDeviceCapture(AudioCaptureBase):
         except Exception as exc:
             raise RuntimeError("Generic capture requires sounddevice. Install requirements-linux-mac.txt") from exc
 
-        device_idx, samplerate, channels = self._select_device(sd)
+        device_idx, samplerate, channels, name = self._select_device(sd)
         blocksize = max(256, int(samplerate * self.cfg.block_ms / 1000.0))
-        self.on_status(f"Capturing input device: {device_idx} @ {samplerate}Hz")
+        self.on_status(f"Capturing input device: #{device_idx} {name!r} @ {samplerate}Hz, channels={channels}")
+        if platform.system().lower() == "darwin" and "blackhole" not in name.lower() and "soundflower" not in name.lower() and "loopback" not in name.lower():
+            self.on_status("WARNING: this does not look like a macOS loopback device. For web-video audio, select BlackHole with --source blackhole.")
 
         def callback(indata, frames, time_info, status):
             if status:
-                # Keep running; overflows can happen during model inference.
                 pass
             try:
                 self._q.put_nowait(indata.copy())
@@ -214,32 +238,45 @@ class SoundDeviceCapture(AudioCaptureBase):
     def _select_device(self, sd):
         source = self.cfg.source.lower().strip()
         devices = sd.query_devices()
+
+        def dev_tuple(idx, dev):
+            sr = int(dev.get("default_samplerate") or 48000)
+            ch = min(2, int(dev.get("max_input_channels") or 1))
+            return idx, sr, ch, str(dev.get("name", ""))
+
         if source != "auto":
+            if source.isdigit():
+                idx = int(source)
+                if idx < 0 or idx >= len(devices):
+                    raise RuntimeError(f"Device index out of range: {idx}")
+                dev = devices[idx]
+                if int(dev.get("max_input_channels", 0)) <= 0:
+                    raise RuntimeError(f"Device #{idx} has no input channels: {dev.get('name')}")
+                return dev_tuple(idx, dev)
             for idx, dev in enumerate(devices):
                 name = str(dev.get("name", ""))
                 if source in name.lower() and int(dev.get("max_input_channels", 0)) > 0:
-                    sr = int(dev.get("default_samplerate") or 48000)
-                    ch = min(2, int(dev.get("max_input_channels") or 1))
-                    return idx, sr, ch
-            raise RuntimeError(f"No input device matching source={self.cfg.source!r}")
+                    return dev_tuple(idx, dev)
+            raise RuntimeError(f"No input device matching source={self.cfg.source!r}. Run --list-devices and pass the device number or a name keyword.")
 
-        # Prefer monitor/loopback devices on Linux/PipeWire/PulseAudio if present.
-        preferred_patterns = ["monitor", "loopback", "blackhole", "soundflower", "stereo mix", "what u hear"]
+        preferred_patterns = ["blackhole", "soundflower", "loopback", "monitor", "stereo mix", "what u hear"]
         for pat in preferred_patterns:
             for idx, dev in enumerate(devices):
                 name = str(dev.get("name", ""))
                 if pat in name.lower() and int(dev.get("max_input_channels", 0)) > 0:
-                    sr = int(dev.get("default_samplerate") or 48000)
-                    ch = min(2, int(dev.get("max_input_channels") or 1))
-                    return idx, sr, ch
+                    return dev_tuple(idx, dev)
+
+        if platform.system().lower() == "darwin" and not self.cfg.allow_mic_fallback:
+            raise RuntimeError(
+                "No macOS loopback input found. Install/reboot BlackHole, set browser output to BlackHole or a Multi-Output Device, "
+                "then run with --source blackhole. To intentionally test the microphone, add --allow-mic-fallback."
+            )
 
         default_idx = sd.default.device[0]
         if default_idx is None or default_idx < 0:
             raise RuntimeError("No default input device. On macOS/Linux configure a loopback/monitor input first.")
         dev = devices[default_idx]
-        sr = int(dev.get("default_samplerate") or 48000)
-        ch = min(2, int(dev.get("max_input_channels") or 1))
-        return default_idx, sr, ch
+        return dev_tuple(default_idx, dev)
 
 
 def make_capture(cfg: AudioConfig, on_chunk: Callable[[np.ndarray], None], on_status: Callable[[str], None] | None = None) -> AudioCaptureBase:
@@ -268,6 +305,10 @@ def list_devices_text() -> str:
         lines.append("\n[sounddevice devices]")
         for i, dev in enumerate(sd.query_devices()):
             lines.append(f"{i:>3}: {dev.get('name')} | input={dev.get('max_input_channels')} output={dev.get('max_output_channels')} sr={dev.get('default_samplerate')}")
+        try:
+            lines.append(f"\nDefault input/output: {sd.default.device}")
+        except Exception:
+            pass
     except Exception as exc:
         lines.append(f"sounddevice unavailable: {exc}")
     return "\n".join(lines)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import queue
-import threading
+import sys
 import time
 import tkinter as tk
 from dataclasses import dataclass
@@ -16,7 +16,7 @@ class CaptionMessage:
 
 
 class SubtitleOverlay:
-    """Always-on-top subtitle overlay using Tkinter."""
+    """Always-on-top subtitle overlay using Tkinter, with extra macOS floating-window handling."""
 
     def __init__(self, width_ratio: float = 0.82, ttl: float = 6.0):
         self.ttl = ttl
@@ -25,6 +25,7 @@ class SubtitleOverlay:
         self._root: tk.Tk | None = None
         self._label: tk.Label | None = None
         self.width_ratio = width_ratio
+        self._macos_window_configured = False
 
     def show(self, text: str, ttl: float | None = None) -> None:
         text = text.strip()
@@ -36,15 +37,15 @@ class SubtitleOverlay:
         root = tk.Tk()
         self._root = root
         root.title("Live English Subtitles")
-        root.attributes("-topmost", True)
-        root.attributes("-alpha", 0.88)
         root.configure(bg="#101010")
         root.overrideredirect(True)
+        self._apply_always_on_top()
+        root.attributes("-alpha", 0.90)
 
         screen_w = root.winfo_screenwidth()
         screen_h = root.winfo_screenheight()
         width = int(screen_w * self.width_ratio)
-        height = 112
+        height = 118
         x = int((screen_w - width) / 2)
         y = int(screen_h - height - 86)
         root.geometry(f"{width}x{height}+{x}+{y}")
@@ -68,7 +69,69 @@ class SubtitleOverlay:
         root.bind("<B1-Motion>", self._move_window)
 
         self._poll_queue()
+        self._keep_on_top()
         root.mainloop()
+
+    def _apply_always_on_top(self) -> None:
+        root = self._root
+        if root is None:
+            return
+        try:
+            root.attributes("-topmost", True)
+        except Exception:
+            pass
+        try:
+            root.tk.call("wm", "attributes", root._w, "-topmost", "1")
+        except Exception:
+            pass
+        try:
+            root.lift()
+        except Exception:
+            pass
+        if sys.platform == "darwin":
+            self._apply_macos_floating_level()
+
+    def _apply_macos_floating_level(self) -> None:
+        """Make the Tk window a floating macOS window when PyObjC is available.
+
+        This helps the overlay stay above normal app windows and join all Spaces.
+        Browser true-fullscreen may still be controlled by macOS; if the overlay is hidden there,
+        use the browser window maximized rather than native fullscreen.
+        """
+        if self._macos_window_configured:
+            return
+        try:
+            from AppKit import (  # type: ignore
+                NSApp,
+                NSStatusWindowLevel,
+                NSWindowCollectionBehaviorCanJoinAllSpaces,
+                NSWindowCollectionBehaviorFullScreenAuxiliary,
+                NSWindowCollectionBehaviorStationary,
+            )
+
+            app = NSApp()
+            if app is None:
+                return
+            for win in app.windows():
+                title = str(win.title())
+                if "Live English Subtitles" in title or title == "":
+                    win.setLevel_(NSStatusWindowLevel)
+                    behavior = win.collectionBehavior()
+                    behavior |= NSWindowCollectionBehaviorCanJoinAllSpaces
+                    behavior |= NSWindowCollectionBehaviorFullScreenAuxiliary
+                    behavior |= NSWindowCollectionBehaviorStationary
+                    win.setCollectionBehavior_(behavior)
+                    self._macos_window_configured = True
+        except Exception:
+            # The tkinter topmost fallback still works for ordinary windows.
+            pass
+
+    def _keep_on_top(self) -> None:
+        root = self._root
+        if root is None:
+            return
+        self._apply_always_on_top()
+        root.after(700, self._keep_on_top)
 
     def _poll_queue(self) -> None:
         assert self._root is not None
