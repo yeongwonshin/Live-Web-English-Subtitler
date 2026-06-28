@@ -250,3 +250,19 @@ For the lowest latency, run:
 
 Live transcription cannot be perfectly frame-synced like a subtitle file because the audio must be captured, chunked, transcribed, and then rendered. Shorter chunks reduce delay but can lower recognition accuracy.
 
+
+
+## Scrollable sentence history overlay
+
+The overlay keeps previous captions in a scrollable history instead of replacing the current line.
+New recognized sentences are appended at the bottom, older sentences move upward, and you can scroll
+inside the caption window to review earlier lines.
+
+Useful options:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --caption-history-size 160 --overlay-height 340
+```
+
+- `--caption-history-size`: maximum number of sentence-level captions kept in the overlay.
+- `--overlay-height`: height of the floating caption window in pixels.

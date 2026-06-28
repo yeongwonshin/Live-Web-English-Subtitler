@@ -32,7 +32,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--partial-overlap-seconds", type=float, default=0.25, help="Audio overlap kept between rolling chunks to avoid cutting words")
     parser.add_argument("--transcriber-queue-size", type=int, default=2, help="Maximum pending chunks; lower keeps captions fresher")
     parser.add_argument("--no-vad-filter", action="store_true", help="Disable faster-whisper VAD for lower latency on already chunked audio")
-    parser.add_argument("--subtitle-ttl", type=float, default=6.0, help="Seconds a subtitle remains visible")
+    parser.add_argument("--subtitle-ttl", type=float, default=6.0, help="Deprecated for history mode; kept for compatibility")
+    parser.add_argument("--caption-history-size", type=int, default=120, help="Maximum number of sentence-level captions kept in the scrollback overlay")
+    parser.add_argument("--overlay-height", type=int, default=280, help="Caption overlay height in pixels")
     parser.add_argument("--no-overlay", action="store_true", help="Disable subtitle overlay; captions will be printed to the console instead")
     parser.add_argument("--print-captions", action="store_true", help="Debug only: also print recognized captions to the terminal")
     parser.add_argument("--quiet", action="store_true", help="Suppress status logs. Captions still appear in the overlay unless --no-overlay is set")
@@ -75,7 +77,12 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 pass
 
-    overlay = None if args.no_overlay else SubtitleOverlay(ttl=args.subtitle_ttl, on_close=request_stop)
+    overlay = None if args.no_overlay else SubtitleOverlay(
+        ttl=args.subtitle_ttl,
+        on_close=request_stop,
+        max_sentences=args.caption_history_size,
+        height=args.overlay_height,
+    )
 
     def caption(text: str) -> None:
         """Send real subtitle text to the overlay.
