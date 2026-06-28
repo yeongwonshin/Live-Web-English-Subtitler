@@ -26,6 +26,7 @@ class WhisperWorker:
         device: str = "auto",
         compute_type: str = "int8",
         on_text: Callable[[str], None] | None = None,
+        on_status: Callable[[str], None] | None = None,
         beam_size: int = 3,
     ):
         self.model_name = model_name
@@ -33,6 +34,7 @@ class WhisperWorker:
         self.device = device
         self.compute_type = compute_type
         self.on_text = on_text or (lambda _text: None)
+        self.on_status = on_status or (lambda _text: None)
         self.beam_size = beam_size
         self.queue: queue.Queue[AudioSegment | None] = queue.Queue(maxsize=8)
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -69,9 +71,9 @@ class WhisperWorker:
                 compute_type=self.compute_type,
             )
             self._loaded.set()
-            self.on_text(f"[Whisper] model loaded: {self.model_name}")
+            self.on_status(f"[Whisper] model loaded: {self.model_name}")
         except Exception as exc:
-            self.on_text(f"[Whisper model load failed] {exc}")
+            self.on_status(f"[Whisper model load failed] {exc}")
             return
 
         while not self._stop.is_set():
@@ -91,9 +93,10 @@ class WhisperWorker:
                 text = " ".join(seg.text.strip() for seg in segments).strip()
                 text = self._clean_text(text)
                 if text:
+                    # Actual captions go only to the subtitle sink. They are not status logs.
                     self.on_text(text)
             except Exception as exc:
-                self.on_text(f"[Transcription error] {exc}")
+                self.on_status(f"[Transcription error] {exc}")
 
     @staticmethod
     def _clean_text(text: str) -> str:

@@ -210,3 +210,24 @@ live_web_english_subtitler/
       ├─ transcriber.py
       └─ utils.py
 ```
+
+
+## v3 notes: overlay-only captions and close button
+
+Normal run command:
+
+```bash
+./run_mac_blackhole.sh
+```
+
+In normal mode, recognized subtitle text is shown only in the subtitle overlay window. It is not printed in the terminal.
+
+The overlay now has a small `×` close button in the top-right corner. You can also press `Esc` to close it. Closing the overlay stops the audio capture and transcription worker.
+
+For troubleshooting audio routing only, use:
+
+```bash
+./run_mac_blackhole_debug.sh
+```
+
+Debug mode prints RMS sound levels so you can confirm that BlackHole is receiving audio. It still does not print subtitle text unless you explicitly add `--print-captions`.

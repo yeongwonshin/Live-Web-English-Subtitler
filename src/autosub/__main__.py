@@ -29,7 +29,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-chunk-seconds", type=float, default=4.0, help="Maximum speech chunk duration before transcription")
     parser.add_argument("--silence-hold-seconds", type=float, default=0.55, help="Silence duration required to close a chunk")
     parser.add_argument("--subtitle-ttl", type=float, default=6.0, help="Seconds a subtitle remains visible")
-    parser.add_argument("--no-overlay", action="store_true", help="Print captions to console only")
+    parser.add_argument("--no-overlay", action="store_true", help="Disable subtitle overlay; captions will be printed to the console instead")
+    parser.add_argument("--print-captions", action="store_true", help="Debug only: also print recognized captions to the terminal")
+    parser.add_argument("--quiet", action="store_true", help="Suppress status logs. Captions still appear in the overlay unless --no-overlay is set")
     parser.add_argument("--show-levels", action="store_true", help="Print live input RMS levels so you can verify that audio is reaching the program")
     parser.add_argument("--allow-mic-fallback", action="store_true", help="On macOS, allow auto mode to use the microphone if no BlackHole/loopback input is found")
     return parser.parse_args(argv)
@@ -46,23 +48,54 @@ def main(argv: list[str] | None = None) -> int:
     if project_src not in sys.path:
         sys.path.insert(0, project_src)
 
-    overlay = None if args.no_overlay else SubtitleOverlay(ttl=args.subtitle_ttl)
+    stop_requested = threading.Event()
+    capture_holder = {"capture": None}
+    worker_holder = {"worker": None}
 
-    def emit(text: str) -> None:
-        print(text, flush=True)
+    def status(text: str) -> None:
+        if not args.quiet:
+            print(text, flush=True)
+
+    def request_stop() -> None:
+        stop_requested.set()
+        capture = capture_holder.get("capture")
+        worker = worker_holder.get("worker")
+        if capture is not None:
+            try:
+                capture.stop()
+            except Exception:
+                pass
+        if worker is not None:
+            try:
+                worker.stop()
+            except Exception:
+                pass
+
+    overlay = None if args.no_overlay else SubtitleOverlay(ttl=args.subtitle_ttl, on_close=request_stop)
+
+    def caption(text: str) -> None:
+        """Send real subtitle text to the overlay.
+
+        Normal user mode must not print subtitles in the terminal. Terminal captions are enabled
+        only when the user explicitly passes --print-captions or disables the overlay with --no-overlay.
+        """
         if overlay:
             overlay.show(text)
+        if args.no_overlay or args.print_captions:
+            print(text, flush=True)
 
-    emit("Live Web English Subtitler is starting. Play an English web video; captions will appear when audio is detected.")
+    status("Live Web English Subtitler is starting. Captions will appear only in the overlay window.")
 
     worker = WhisperWorker(
         model_name=args.model,
         language=args.language,
         device=args.device,
         compute_type=args.compute_type,
-        on_text=emit,
+        on_text=caption,
+        on_status=status,
         beam_size=args.beam_size,
     )
+    worker_holder["worker"] = worker
     worker.start()
 
     cfg = AudioConfig(
@@ -74,23 +107,20 @@ def main(argv: list[str] | None = None) -> int:
         show_levels=args.show_levels,
         allow_mic_fallback=args.allow_mic_fallback,
     )
-    capture = make_capture(cfg, on_chunk=worker.submit, on_status=lambda s: emit(f"[audio] {s}"))
+    capture = make_capture(cfg, on_chunk=worker.submit, on_status=lambda s: status(f"[audio] {s}"))
+    capture_holder["capture"] = capture
 
     def audio_thread() -> None:
         try:
             capture.run()
         except Exception as exc:
-            emit(f"[audio capture failed] {exc}")
+            status(f"[audio capture failed] {exc}")
 
     thread = threading.Thread(target=audio_thread, daemon=True)
     thread.start()
 
-    stop_requested = threading.Event()
-
     def stop_handler(signum, frame):
-        stop_requested.set()
-        capture.stop()
-        worker.stop()
+        request_stop()
         try:
             if overlay and overlay._root is not None:
                 overlay._root.after(0, overlay._root.destroy)
@@ -112,8 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             pass
 
-    capture.stop()
-    worker.stop()
+    request_stop()
     return 0
 
 
