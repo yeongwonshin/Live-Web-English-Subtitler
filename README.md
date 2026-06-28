@@ -231,3 +231,22 @@ For troubleshooting audio routing only, use:
 ```
 
 Debug mode prints RMS sound levels so you can confirm that BlackHole is receiving audio. It still does not print subtitle text unless you explicitly add `--print-captions`.
+
+## Sync / latency tuning
+
+The macOS launcher now defaults to a low-latency profile: `tiny.en`, beam size 1, short rolling chunks, and a queue size of 1. This reduces the delay between browser audio and the overlay caption.
+
+For better accuracy at the cost of more delay, run:
+
+```bash
+./run_mac_blackhole.sh --model base.en --partial-chunk-seconds 1.2 --max-chunk-seconds 2.2 --transcriber-queue-size 2
+```
+
+For the lowest latency, run:
+
+```bash
+./run_mac_blackhole.sh --model tiny.en --partial-chunk-seconds 0.7 --max-chunk-seconds 1.2 --no-vad-filter
+```
+
+Live transcription cannot be perfectly frame-synced like a subtitle file because the audio must be captured, chunked, transcribed, and then rendered. Shorter chunks reduce delay but can lower recognition accuracy.
+

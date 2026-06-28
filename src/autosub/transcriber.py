@@ -27,7 +27,9 @@ class WhisperWorker:
         compute_type: str = "int8",
         on_text: Callable[[str], None] | None = None,
         on_status: Callable[[str], None] | None = None,
-        beam_size: int = 3,
+        beam_size: int = 1,
+        queue_size: int = 2,
+        vad_filter: bool = True,
     ):
         self.model_name = model_name
         self.language = language
@@ -36,7 +38,10 @@ class WhisperWorker:
         self.on_text = on_text or (lambda _text: None)
         self.on_status = on_status or (lambda _text: None)
         self.beam_size = beam_size
-        self.queue: queue.Queue[AudioSegment | None] = queue.Queue(maxsize=8)
+        self.vad_filter = vad_filter
+        self.queue: queue.Queue[AudioSegment | None] = queue.Queue(maxsize=max(1, queue_size))
+        self._last_text = ""
+        self._last_text_at = 0.0
         self.thread = threading.Thread(target=self._run, daemon=True)
         self._stop = threading.Event()
         self._loaded = threading.Event()
@@ -52,14 +57,14 @@ class WhisperWorker:
             pass
 
     def submit(self, audio_16k: np.ndarray) -> None:
-        if audio_16k.size < 16000 * 0.6:
+        if audio_16k.size < 16000 * 0.45:
             return
-        # Drop oldest if the transcriber falls behind. Live subtitles prefer freshness.
-        if self.queue.full():
+        # Drop all stale work if the transcriber falls behind. Live subtitles prefer freshness over backlog.
+        while self.queue.full():
             try:
                 self.queue.get_nowait()
             except queue.Empty:
-                pass
+                break
         self.queue.put(AudioSegment(audio_16k.astype(np.float32), time.time()))
 
     def _run(self) -> None:
@@ -85,18 +90,34 @@ class WhisperWorker:
                     item.audio_16k,
                     language=self.language,
                     beam_size=self.beam_size,
-                    vad_filter=True,
+                    vad_filter=self.vad_filter,
                     condition_on_previous_text=False,
                     temperature=0.0,
                     no_speech_threshold=0.55,
                 )
                 text = " ".join(seg.text.strip() for seg in segments).strip()
                 text = self._clean_text(text)
-                if text:
+                if text and not self._is_duplicate(text):
                     # Actual captions go only to the subtitle sink. They are not status logs.
+                    self._last_text = text
+                    self._last_text_at = time.time()
                     self.on_text(text)
             except Exception as exc:
                 self.on_status(f"[Transcription error] {exc}")
+
+    def _is_duplicate(self, text: str) -> bool:
+        now = time.time()
+        current = re.sub(r"\W+", " ", text.lower()).strip()
+        previous = re.sub(r"\W+", " ", self._last_text.lower()).strip()
+        if not current or not previous:
+            return False
+        if now - self._last_text_at > 8.0:
+            return False
+        if current == previous:
+            return True
+        if len(current) > 12 and len(previous) > 12 and (current in previous or previous in current):
+            return True
+        return False
 
     @staticmethod
     def _clean_text(text: str) -> str:

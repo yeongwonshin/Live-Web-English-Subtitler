@@ -23,11 +23,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--language", default="en", help="Speech language code. Default: en")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="Whisper device")
     parser.add_argument("--compute-type", default="int8", help="faster-whisper compute type, e.g. int8, float16")
-    parser.add_argument("--beam-size", type=int, default=3, help="Beam size for transcription")
+    parser.add_argument("--beam-size", type=int, default=1, help="Beam size for transcription; 1 is fastest for live captions")
     parser.add_argument("--silence-rms", type=float, default=0.004, help="RMS threshold for audio activity")
-    parser.add_argument("--min-chunk-seconds", type=float, default=1.4, help="Minimum speech chunk duration")
-    parser.add_argument("--max-chunk-seconds", type=float, default=4.0, help="Maximum speech chunk duration before transcription")
-    parser.add_argument("--silence-hold-seconds", type=float, default=0.55, help="Silence duration required to close a chunk")
+    parser.add_argument("--min-chunk-seconds", type=float, default=0.65, help="Minimum speech chunk duration")
+    parser.add_argument("--max-chunk-seconds", type=float, default=1.8, help="Maximum speech chunk duration before transcription")
+    parser.add_argument("--silence-hold-seconds", type=float, default=0.25, help="Silence duration required to close a chunk")
+    parser.add_argument("--partial-chunk-seconds", type=float, default=1.0, help="Emit rolling live chunks this often while speech continues; lower means lower latency")
+    parser.add_argument("--partial-overlap-seconds", type=float, default=0.25, help="Audio overlap kept between rolling chunks to avoid cutting words")
+    parser.add_argument("--transcriber-queue-size", type=int, default=2, help="Maximum pending chunks; lower keeps captions fresher")
+    parser.add_argument("--no-vad-filter", action="store_true", help="Disable faster-whisper VAD for lower latency on already chunked audio")
     parser.add_argument("--subtitle-ttl", type=float, default=6.0, help="Seconds a subtitle remains visible")
     parser.add_argument("--no-overlay", action="store_true", help="Disable subtitle overlay; captions will be printed to the console instead")
     parser.add_argument("--print-captions", action="store_true", help="Debug only: also print recognized captions to the terminal")
@@ -94,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         on_text=caption,
         on_status=status,
         beam_size=args.beam_size,
+        queue_size=args.transcriber_queue_size,
+        vad_filter=not args.no_vad_filter,
     )
     worker_holder["worker"] = worker
     worker.start()
@@ -104,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         min_chunk_seconds=args.min_chunk_seconds,
         max_chunk_seconds=args.max_chunk_seconds,
         silence_hold_seconds=args.silence_hold_seconds,
+        partial_chunk_seconds=args.partial_chunk_seconds,
+        partial_overlap_seconds=args.partial_overlap_seconds,
         show_levels=args.show_levels,
         allow_mic_fallback=args.allow_mic_fallback,
     )

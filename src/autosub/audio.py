@@ -19,9 +19,11 @@ class AudioConfig:
     target_rate: int = 16000
     block_ms: int = 120
     silence_rms: float = 0.004
-    min_chunk_seconds: float = 1.4
-    max_chunk_seconds: float = 4.0
-    silence_hold_seconds: float = 0.55
+    min_chunk_seconds: float = 0.65
+    max_chunk_seconds: float = 1.8
+    silence_hold_seconds: float = 0.25
+    partial_chunk_seconds: float = 1.0
+    partial_overlap_seconds: float = 0.25
     show_levels: bool = False
     level_interval_seconds: float = 0.7
     allow_mic_fallback: bool = False
@@ -57,6 +59,7 @@ class SpeechChunker:
         self._active = False
         self._last_sound = 0.0
         self._sample_count = 0
+        self._samples_since_emit = 0
 
     def accept(self, audio_16k: np.ndarray) -> None:
         if audio_16k.size == 0:
@@ -70,20 +73,47 @@ class SpeechChunker:
             self._active = True
             self._buf = []
             self._sample_count = 0
+            self._samples_since_emit = 0
             self._last_sound = now
 
         if self._active:
             self._buf.append(audio_16k)
             self._sample_count += audio_16k.size
+            self._samples_since_emit += audio_16k.size
             if is_sound:
                 self._last_sound = now
 
             elapsed = self._sample_count / float(self.cfg.target_rate)
+            since_emit = self._samples_since_emit / float(self.cfg.target_rate)
             silence_elapsed = now - self._last_sound if self._last_sound else 0.0
+            should_emit_partial = (
+                self.cfg.partial_chunk_seconds > 0
+                and elapsed >= self.cfg.min_chunk_seconds
+                and since_emit >= self.cfg.partial_chunk_seconds
+                and is_sound
+            )
             should_flush_for_silence = elapsed >= self.cfg.min_chunk_seconds and silence_elapsed >= self.cfg.silence_hold_seconds
             should_flush_for_length = elapsed >= self.cfg.max_chunk_seconds
-            if should_flush_for_silence or should_flush_for_length:
+            if should_emit_partial:
+                self._emit_partial()
+            elif should_flush_for_silence or should_flush_for_length:
                 self._flush()
+
+    def _emit_partial(self) -> None:
+        if not self._buf:
+            return
+        chunk = np.concatenate(self._buf).astype(np.float32)
+        if chunk.size >= int(self.cfg.min_chunk_seconds * self.cfg.target_rate * 0.55):
+            self.on_chunk(chunk)
+        overlap_samples = max(0, int(self.cfg.partial_overlap_seconds * self.cfg.target_rate))
+        if overlap_samples > 0 and chunk.size > overlap_samples:
+            tail = chunk[-overlap_samples:].copy()
+            self._buf = [tail]
+            self._sample_count = tail.size
+        else:
+            self._buf = []
+            self._sample_count = 0
+        self._samples_since_emit = 0
 
     def _flush(self) -> None:
         if not self._buf:
@@ -93,6 +123,7 @@ class SpeechChunker:
         self._buf = []
         self._active = False
         self._sample_count = 0
+        self._samples_since_emit = 0
         self._last_sound = 0.0
         if chunk.size >= int(self.cfg.min_chunk_seconds * self.cfg.target_rate * 0.55):
             self.on_chunk(chunk)
