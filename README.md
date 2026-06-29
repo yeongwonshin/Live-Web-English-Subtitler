@@ -1,21 +1,42 @@
 # Live Web English Subtitler
 
-웹에서 영상을 재생하면, 별도 업로드 없이 **컴퓨터에서 재생 중인 시스템 오디오**를 실시간으로 캡처해 영어 자막을 화면 위에 띄우는 로컬 프로그램입니다.
+Live Web English Subtitler is a local desktop application that captures the system audio currently playing on a computer and displays real-time English captions in an always-on-top overlay window.
 
-- 영상 파일 업로드 없음
-- 브라우저/웹사이트 종류와 무관하게 시스템 출력 오디오를 캡처
-- Whisper 계열 `faster-whisper` 모델로 영어 음성 전사
-- 항상 위에 표시되는 자막 오버레이 제공
-- 소리가 들어오면 자동으로 전사 구간을 만들고, 무음이면 대기
-- `--show-levels`로 실제 입력 오디오가 들어오는지 RMS 레벨 확인 가능
+The application is designed for web video playback, but it does not depend on a specific browser, video platform, or uploaded media file. It listens to the computer's audio output, segments speech automatically, transcribes English speech with a `faster-whisper` model, and renders captions on screen.
 
-> macOS는 OS가 시스템 오디오 입력을 기본 제공하지 않으므로 BlackHole 같은 loopback 장치 설정이 필요합니다.
+No video or audio file upload is required.
 
----
+## 1. Key Features
 
-## 1. 설치
+- Captures system playback audio instead of requiring video file uploads.
+- Works independently of browser or website type, as long as the audio is routed to an available input or loopback device.
+- Uses `faster-whisper` for English speech transcription.
+- Displays captions in an always-on-top overlay window.
+- Automatically starts transcription when speech is detected and waits during silence.
+- Provides RMS audio level diagnostics with `--show-levels`.
+- Supports a scrollable caption history inside the overlay.
+- Allows latency and accuracy tuning through model, chunk, queue, and VAD options.
+- Provides a close button and `Esc` shortcut to stop the overlay, audio capture, and transcription worker.
 
-### Windows
+## 2. Platform Notes
+
+### 2.1 Windows
+
+Windows can usually capture system playback audio through an available loopback-style input device, depending on the audio driver and device configuration.
+
+### 2.2 macOS
+
+macOS does not provide system audio capture as a standard input source. A loopback device such as BlackHole is required.
+
+When using BlackHole, browser audio must be routed to BlackHole, or to a Multi-Output Device that includes both the speakers and BlackHole.
+
+### 2.3 Linux
+
+Linux systems may expose system playback audio through PulseAudio or PipeWire monitor devices. The exact device name depends on the distribution and audio stack.
+
+## 3. Installation
+
+### 3.1 Windows
 
 ```bash
 cd live_web_english_subtitler
@@ -25,7 +46,7 @@ pip install --upgrade pip
 pip install -r requirements-windows.txt
 ```
 
-### macOS / Linux
+### 3.2 macOS and Linux
 
 ```bash
 cd live_web_english_subtitler
@@ -35,164 +56,253 @@ pip install --upgrade pip
 pip install -r requirements-linux-mac.txt
 ```
 
----
+## 4. macOS Audio Routing with BlackHole
 
-## 2. macOS에서 웹 영상 소리 연결하기
+### 4.1 Install BlackHole
 
-BlackHole 설치 후에는 반드시 Mac을 재시동하세요.
+Install BlackHole and restart macOS before checking the available audio devices.
 
 ```bash
 brew install blackhole-2ch
-# 설치 후 재시동
+# Restart macOS after installation.
 ```
 
-재시동 후 장치 확인:
+After restarting, list available devices:
 
 ```bash
 PYTHONPATH=$PWD/src python -m autosub --list-devices
 ```
 
-`BlackHole 2ch`가 보여야 합니다.
+`BlackHole 2ch` should appear in the device list.
 
-### 소리도 들으면서 자막 생성하려면
+### 4.2 Hear Audio While Captions Are Generated
 
-1. macOS **오디오 MIDI 설정(Audio MIDI Setup)** 앱 열기
-2. 왼쪽 아래 `+` 클릭
-3. **다중 출력 기기(Multi-Output Device)** 생성
-4. `MacBook Air 스피커` 체크
-5. `BlackHole 2ch` 체크
-6. 시스템 설정 → 사운드 → 출력에서 방금 만든 **다중 출력 기기** 선택
-7. 아래 명령으로 실행
+To hear browser audio while also sending it to the subtitler, create a Multi-Output Device:
+
+1. Open the macOS **Audio MIDI Setup** application.
+2. Click the `+` button in the lower-left corner.
+3. Select **Create Multi-Output Device**.
+4. Enable the built-in speaker output, such as `MacBook Air Speakers`.
+5. Enable `BlackHole 2ch`.
+6. Open System Settings → Sound → Output.
+7. Select the newly created **Multi-Output Device** as the system output.
+8. Run the subtitler with the BlackHole source.
 
 ```bash
 ./run_mac_blackhole.sh
 ```
 
-또는:
+Equivalent command:
 
 ```bash
 PYTHONPATH=$PWD/src python -m autosub --source blackhole --language en --model base.en --show-levels
 ```
 
-영상 재생 중 터미널에 아래처럼 나오면 오디오가 들어오는 것입니다.
+When audio is routed correctly, RMS diagnostics show a sound state:
 
 ```text
 [audio] input RMS max=0.03210 threshold=0.00400 [SOUND]
 ```
 
-계속 아래처럼 나오면 브라우저 소리가 BlackHole으로 안 들어오는 상태입니다.
+If the browser audio is not reaching BlackHole, RMS diagnostics remain silent:
 
 ```text
 [audio] input RMS max=0.00000 threshold=0.00400 [silence/too low]
 ```
 
-이 경우 시스템 출력이 **다중 출력 기기**인지 다시 확인하세요.
+In that case, verify that the macOS system output is set to the Multi-Output Device that includes BlackHole.
 
----
+## 5. Running the Application
 
-## 3. 실행
-
-### Windows
+### 5.1 Windows
 
 ```bash
 run_windows.bat
 ```
 
-또는:
+Equivalent command:
 
 ```bash
 python -m autosub --source auto --language en --model base.en
 ```
 
-### macOS
+### 5.2 macOS
 
 ```bash
 ./run_mac_blackhole.sh
 ```
 
-### Linux
+For audio routing diagnostics:
 
-PulseAudio/PipeWire monitor 입력이 있으면:
+```bash
+./run_mac_blackhole_debug.sh
+```
+
+The debug launcher prints RMS sound levels so that BlackHole audio input can be verified. Caption text is still shown in the overlay window unless `--print-captions` is explicitly enabled.
+
+### 5.3 Linux
+
+Use the default launcher when a PulseAudio or PipeWire monitor input is available:
 
 ```bash
 ./run.sh
 ```
 
-또는 장치 이름을 지정합니다.
+Or specify a monitor source explicitly:
 
 ```bash
 PYTHONPATH=$PWD/src python -m autosub --source monitor --language en --model base.en --show-levels
 ```
 
----
+## 6. Command-Line Options
 
-## 4. 주요 옵션
+Display all available options:
 
 ```bash
 python -m autosub --help
 ```
 
-자주 쓰는 예시:
+### 6.1 List Input Devices
 
 ```bash
-# 입력 장치 목록 확인
 PYTHONPATH=$PWD/src python -m autosub --list-devices
-
-# macOS BlackHole 강제 선택
-PYTHONPATH=$PWD/src python -m autosub --source blackhole --show-levels
-
-# 장치 번호로 직접 선택
-PYTHONPATH=$PWD/src python -m autosub --source 2 --show-levels
-
-# 소리 감지 민감도 올리기: 작은 소리도 감지
-PYTHONPATH=$PWD/src python -m autosub --source blackhole --silence-rms 0.0025 --show-levels
-
-# 더 빠르게, 정확도는 낮음
-PYTHONPATH=$PWD/src python -m autosub --source blackhole --model tiny.en --show-levels
-
-# 정확도 조금 향상, CPU에서는 더 느림
-PYTHONPATH=$PWD/src python -m autosub --source blackhole --model small.en --show-levels
 ```
 
----
+### 6.2 Select a Specific Audio Source
 
-## 5. 자막창이 다른 창 뒤로 숨길 때
-
-이번 버전은 Tkinter `topmost`를 반복 적용하고, macOS에서는 PyObjC가 설치되어 있으면 floating window level과 all-Spaces 보조 속성을 적용합니다.
-
-그래도 macOS의 브라우저 **진짜 전체화면 모드**에서는 OS 정책상 별도 앱 창이 가려질 수 있습니다. 그 경우 브라우저를 초록 버튼 전체화면 대신 일반 창 최대화 상태로 사용하세요.
-
----
-
-## 6. 문제 해결
-
-### 영상 틀어도 자막이 안 나올 때
-
-먼저 RMS 레벨을 확인하세요.
+Force the BlackHole source on macOS:
 
 ```bash
-PYTHONPATH=$PWD/src python -m autosub --source blackhole --show-levels --model tiny.en
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --show-levels
 ```
 
-- `[SOUND]`가 뜨면 오디오는 들어오고 있습니다. 조금 기다리거나 `--model tiny.en`으로 속도를 높여 보세요.
-- `[silence/too low]`만 뜨면 브라우저 소리가 BlackHole으로 안 들어오고 있습니다. macOS 출력 장치를 **다중 출력 기기**로 바꾸세요.
-- `BlackHole` 장치가 목록에 없으면 재시동하거나 `sudo killall coreaudiod` 후 다시 확인하세요.
+Select a source by device number:
 
-### 잡음 때문에 아무 말이나 인식할 때
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source 2 --show-levels
+```
+
+Select a Linux monitor source:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source monitor --show-levels
+```
+
+### 6.3 Tune Speech Detection
+
+Lower the silence threshold to detect quieter audio:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --silence-rms 0.0025 --show-levels
+```
+
+Raise the silence threshold when background noise causes false speech detection:
 
 ```bash
 PYTHONPATH=$PWD/src python -m autosub --source blackhole --silence-rms 0.012
 ```
 
-### CPU가 너무 느릴 때
+### 6.4 Choose a Whisper Model
+
+Use a faster model with lower accuracy:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --model tiny.en --show-levels
+```
+
+Use a more accurate model with higher CPU cost:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --model small.en --show-levels
+```
+
+Use CPU-friendly quantized inference:
 
 ```bash
 PYTHONPATH=$PWD/src python -m autosub --source blackhole --model tiny.en --compute-type int8
 ```
 
----
+## 7. Overlay Behavior
 
-## 7. 파일 구조
+The recognized caption text is shown in the subtitle overlay window. In normal operation, captions are not printed to the terminal.
+
+The overlay includes a small `×` close button in the top-right corner. Pressing `Esc` also closes the overlay. Closing the overlay stops audio capture and the transcription worker.
+
+The caption window keeps a scrollable history of recognized sentence-level captions. New sentences are appended at the bottom, and earlier captions move upward. Users can scroll inside the caption window to review previous lines.
+
+Useful overlay options:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --caption-history-size 160 --overlay-height 340
+```
+
+- `--caption-history-size`: Maximum number of sentence-level captions kept in the overlay.
+- `--overlay-height`: Floating caption window height in pixels.
+
+On macOS, the application repeatedly applies the Tkinter `topmost` attribute. If PyObjC is installed, it also applies floating window level and all-Spaces auxiliary behavior where available.
+
+macOS may still hide separate application windows behind browser windows that use native full-screen mode. In that case, use a maximized browser window instead of the green-button full-screen mode.
+
+## 8. Latency and Accuracy Tuning
+
+Live transcription cannot be frame-synchronized like a pre-authored subtitle file. Audio must be captured, chunked, transcribed, and rendered before captions appear.
+
+Shorter chunks reduce caption delay but can reduce recognition accuracy. Larger models and longer chunks can improve accuracy but increase latency.
+
+The macOS launcher uses a low-latency profile by default. For higher accuracy with more delay:
+
+```bash
+./run_mac_blackhole.sh --model base.en --partial-chunk-seconds 1.2 --max-chunk-seconds 2.2 --transcriber-queue-size 2
+```
+
+For lower latency with potentially lower accuracy:
+
+```bash
+./run_mac_blackhole.sh --model tiny.en --partial-chunk-seconds 0.7 --max-chunk-seconds 1.2 --no-vad-filter
+```
+
+## 9. Troubleshooting
+
+### 9.1 Captions Do Not Appear
+
+First check whether audio is reaching the selected input device:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --show-levels --model tiny.en
+```
+
+If `[SOUND]` appears, audio input is working. Wait briefly for transcription, or use `--model tiny.en` for faster processing.
+
+If only `[silence/too low]` appears, browser audio is not reaching the input device. On macOS, confirm that the system output is set to the Multi-Output Device that includes BlackHole.
+
+If BlackHole does not appear in the device list, restart macOS. As an alternative, restart Core Audio and list devices again:
+
+```bash
+sudo killall coreaudiod
+PYTHONPATH=$PWD/src python -m autosub --list-devices
+```
+
+### 9.2 Random Text Appears During Noise
+
+Increase the silence threshold:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --silence-rms 0.012
+```
+
+### 9.3 CPU Transcription Is Too Slow
+
+Use a smaller model and quantized inference:
+
+```bash
+PYTHONPATH=$PWD/src python -m autosub --source blackhole --model tiny.en --compute-type int8
+```
+
+### 9.4 Overlay Is Hidden Behind Another Window
+
+Avoid native full-screen browser mode on macOS. Use a normal maximized browser window instead.
+
+## 10. Project Structure
 
 ```text
 live_web_english_subtitler/
@@ -202,6 +312,7 @@ live_web_english_subtitler/
 ├─ run_windows.bat
 ├─ run.sh
 ├─ run_mac_blackhole.sh
+├─ run_mac_blackhole_debug.sh
 └─ src/
    └─ autosub/
       ├─ __main__.py
@@ -210,59 +321,3 @@ live_web_english_subtitler/
       ├─ transcriber.py
       └─ utils.py
 ```
-
-
-## v3 notes: overlay-only captions and close button
-
-Normal run command:
-
-```bash
-./run_mac_blackhole.sh
-```
-
-In normal mode, recognized subtitle text is shown only in the subtitle overlay window. It is not printed in the terminal.
-
-The overlay now has a small `×` close button in the top-right corner. You can also press `Esc` to close it. Closing the overlay stops the audio capture and transcription worker.
-
-For troubleshooting audio routing only, use:
-
-```bash
-./run_mac_blackhole_debug.sh
-```
-
-Debug mode prints RMS sound levels so you can confirm that BlackHole is receiving audio. It still does not print subtitle text unless you explicitly add `--print-captions`.
-
-## Sync / latency tuning
-
-The macOS launcher now defaults to a low-latency profile: `tiny.en`, beam size 1, short rolling chunks, and a queue size of 1. This reduces the delay between browser audio and the overlay caption.
-
-For better accuracy at the cost of more delay, run:
-
-```bash
-./run_mac_blackhole.sh --model base.en --partial-chunk-seconds 1.2 --max-chunk-seconds 2.2 --transcriber-queue-size 2
-```
-
-For the lowest latency, run:
-
-```bash
-./run_mac_blackhole.sh --model tiny.en --partial-chunk-seconds 0.7 --max-chunk-seconds 1.2 --no-vad-filter
-```
-
-Live transcription cannot be perfectly frame-synced like a subtitle file because the audio must be captured, chunked, transcribed, and then rendered. Shorter chunks reduce delay but can lower recognition accuracy.
-
-
-
-## Scrollable sentence history overlay
-
-The overlay keeps previous captions in a scrollable history instead of replacing the current line.
-New recognized sentences are appended at the bottom, older sentences move upward, and you can scroll
-inside the caption window to review earlier lines.
-
-Useful options:
-
-```bash
-PYTHONPATH=$PWD/src python -m autosub --source blackhole --caption-history-size 160 --overlay-height 340
-```
-
-- `--caption-history-size`: maximum number of sentence-level captions kept in the overlay.
-- `--overlay-height`: height of the floating caption window in pixels.
